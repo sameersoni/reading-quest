@@ -1,0 +1,14 @@
+# macOS and editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# Local environment and tool output
+.env
+.env.*
+.wrangler/
+dist/
