@@ -1,7 +1,7 @@
 /* Reading Quest service worker
    Bump CACHE_NAME whenever you change any cached file so the new
    version replaces the old one on the next launch. */
-const CACHE_NAME = 'reading-quest-v1';
+const CACHE_NAME = 'reading-quest-v2';
 
 const PRECACHE_URLS = [
   './',
@@ -31,19 +31,46 @@ const PRECACHE_URLS = [
   './icons/apple-touch-icon.png',
 ];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting())
+/**
+ * iOS Safari refuses to serve a cached response for a *navigation*
+ * request if that response object has redirected === true (this can
+ * happen even for same-origin URLs, e.g. a host/CDN normalising
+ * "/" to "/index.html"). The fix is to always rebuild a fresh,
+ * non-redirected Response before putting anything in the cache.
+ */
+async function toPlainResponse(response) {
+  const body = await response.blob();
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+async function precache() {
+  const cache = await caches.open(CACHE_NAME);
+  await Promise.all(
+    PRECACHE_URLS.map(async (url) => {
+      try {
+        const response = await fetch(url, { cache: 'no-cache' });
+        if (!response.ok) return;
+        await cache.put(url, await toPlainResponse(response));
+      } catch (err) {
+        console.warn('Reading Quest SW: failed to precache', url, err);
+      }
+    })
   );
+}
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(precache().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
@@ -57,10 +84,11 @@ self.addEventListener('fetch', (event) => {
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request)
-        .then((response) => {
+        .then(async (response) => {
           if (response && response.status === 200 && response.type === 'basic') {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            const plain = await toPlainResponse(response.clone());
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(event.request, plain);
           }
           return response;
         })
